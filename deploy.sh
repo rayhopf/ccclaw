@@ -93,18 +93,11 @@ else
     echo "Repo cloned."
 fi
 
-# Pre-configure Claude Code to skip first-run interactive theme picker
-su - "$USERNAME" bash -c '
-python3 -c "
-import json, os
-p = os.path.expanduser(\"~/.claude.json\")
-d = {}
-if os.path.exists(p):
-    with open(p) as f: d = json.load(f)
-d[\"theme\"] = \"dark\"
-with open(p, \"w\") as f: json.dump(d, f, indent=2)
-"
-'
+# Pre-configure Claude Code to skip first-run onboarding and theme picker
+cat > "$USER_HOME/.claude.json" <<CLAUDEJSON
+{"theme":"dark","hasCompletedOnboarding":true}
+CLAUDEJSON
+chown "$USERNAME:$USERNAME" "$USER_HOME/.claude.json"
 
 # ----------------------------------------------------------
 # Step 5: Write configuration
