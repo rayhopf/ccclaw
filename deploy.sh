@@ -93,6 +93,19 @@ else
     echo "Repo cloned."
 fi
 
+# Pre-configure Claude Code to skip first-run interactive theme picker
+su - "$USERNAME" bash -c '
+python3 -c "
+import json, os
+p = os.path.expanduser(\"~/.claude.json\")
+d = {}
+if os.path.exists(p):
+    with open(p) as f: d = json.load(f)
+d[\"theme\"] = \"dark\"
+with open(p, \"w\") as f: json.dump(d, f, indent=2)
+"
+'
+
 # ----------------------------------------------------------
 # Step 5: Write configuration
 # ----------------------------------------------------------
@@ -118,9 +131,9 @@ cat > "$PROJECT_DIR/bridge/config.json" <<CONFIGJSON
   "telegram_bot_token": "$BOT_TOKEN",
   "whitelist_usernames": $WHITELIST_JSON,
   "poll_interval_seconds": 30,
-  "db_path": "../data/ccclaw.db",
-  "inbox_dir": "../data/inbox",
-  "logs_dir": "../data/logs",
+  "db_path": "data/ccclaw.db",
+  "inbox_dir": "data/inbox",
+  "logs_dir": "data/logs",
   "max_workers": 10
 }
 CONFIGJSON
