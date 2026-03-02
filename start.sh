@@ -17,6 +17,10 @@ tmux new-session -d -s main \
 tmux pipe-pane -t main \
   "exec ts '[%Y-%m-%dT%H:%M:%S]' >> $CCCLAW_DIR/data/logs/main.log"
 
+# Auto-select dark theme if first-run picker appears
+sleep 3
+tmux send-keys -t main Enter
+
 # Start bridge
 cd "$CCCLAW_DIR/bridge"
 nohup python3 main.py >> ../data/logs/bridge.log 2>&1 &
