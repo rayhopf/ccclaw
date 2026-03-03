@@ -93,11 +93,48 @@ else
     echo "Repo cloned."
 fi
 
-# Pre-configure Claude Code to skip first-run onboarding and theme picker
-cat > "$USER_HOME/.claude.json" <<CLAUDEJSON
-{"theme":"dark","hasCompletedOnboarding":true}
-CLAUDEJSON
-chown "$USERNAME:$USERNAME" "$USER_HOME/.claude.json"
+# Pre-configure Claude Code to reduce first-run interactive prompts.
+# Keep existing keys if the file already exists, and force known-safe values.
+CLAUDE_CONFIG_PATH="$USER_HOME/.claude.json"
+CLAUDE_MAIN_WORKSPACE="$PROJECT_DIR/workspaces/main"
+python3 - "$CLAUDE_CONFIG_PATH" "$PROJECT_DIR" "$CLAUDE_MAIN_WORKSPACE" <<'PY'
+import json
+import os
+import sys
+
+config_path, project_root, main_workspace = sys.argv[1:4]
+config = {}
+
+if os.path.exists(config_path):
+    try:
+        with open(config_path) as f:
+            loaded = json.load(f)
+            if isinstance(loaded, dict):
+                config = loaded
+    except Exception:
+        config = {}
+
+config["theme"] = config.get("theme", "dark")
+config["hasCompletedOnboarding"] = True
+
+projects = config.get("projects")
+if not isinstance(projects, dict):
+    projects = {}
+
+for path in (project_root, main_workspace):
+    project_cfg = projects.get(path)
+    if not isinstance(project_cfg, dict):
+        project_cfg = {}
+    project_cfg["hasTrustDialogAccepted"] = True
+    projects[path] = project_cfg
+
+config["projects"] = projects
+
+with open(config_path, "w") as f:
+    json.dump(config, f, separators=(",", ":"))
+PY
+chown "$USERNAME:$USERNAME" "$CLAUDE_CONFIG_PATH"
+chmod 600 "$CLAUDE_CONFIG_PATH"
 
 # ----------------------------------------------------------
 # Step 5: Write configuration
