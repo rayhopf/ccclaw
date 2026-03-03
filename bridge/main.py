@@ -219,7 +219,7 @@ async def poll_outboxes(config, bot_app):
 
 async def polling_loop(config, bot_app):
     """Main polling loop that runs every poll_interval_seconds."""
-    interval = config.get("poll_interval_seconds", 3)
+    interval = config.get("poll_interval_seconds", 1)
     logger.info("Starting polling loop (interval=%ds)", interval)
 
     while True:

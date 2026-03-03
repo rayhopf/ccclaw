@@ -181,7 +181,7 @@ cat > "$PROJECT_DIR/bridge/config.json" <<CONFIGJSON
 {
   "telegram_bot_token": "$BOT_TOKEN",
   "whitelist_usernames": $WHITELIST_JSON,
-  "poll_interval_seconds": 3,
+  "poll_interval_seconds": 1,
   "db_path": "data/ccclaw.db",
   "inbox_dir": "data/inbox",
   "logs_dir": "data/logs",
