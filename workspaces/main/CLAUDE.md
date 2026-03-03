@@ -11,11 +11,14 @@ The project root is `$HOME/ccclaw`.
 
 ## Replying to the user
 
-Output EXACTLY this format in your terminal (the bridge parses your output):
+Output EXACTLY this format in your terminal (the bridge parses your output).
+You MUST use these EXACT markers with triple angle brackets — do NOT shorten them:
 
 <<<CC_OUT_START>>>
 {"to":"user","msg":"Your message here"}
 <<<CC_OUT_END>>>
+
+IMPORTANT: The markers must be exactly `<<<CC_OUT_START>>>` and `<<<CC_OUT_END>>>` with three `<` and three `>`. Do not abbreviate.
 
 ## Spawning workers
 

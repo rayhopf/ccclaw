@@ -18,7 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 MARKER_PATTERN = re.compile(
-    r"<<<CC_OUT_START>>>\s*\n(.*?)\n\s*<<<CC_OUT_END>>>",
+    r"<{2,3}CC_OUT_START>{2,3}\s*\n(.*?)\n\s*<{2,3}CC_OUT_END>{2,3}",
     re.DOTALL,
 )
 
