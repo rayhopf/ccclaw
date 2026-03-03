@@ -11,16 +11,16 @@ The project root is `$HOME/ccclaw`.
 
 ## Replying to the user
 
-To send a message back to the user, output EXACTLY this format (the bridge parses it):
+Write a JSON file to the outbox directory. The bridge picks it up and sends it to Telegram.
 
-CCCLAW_MSG_START
-{"to":"user","msg":"Your message here"}
-CCCLAW_MSG_END
+echo '{"to":"user","msg":"Your message here"}' > $HOME/ccclaw/data/outbox/msg_000000001.json
 
 Rules:
-- The marker lines must be exactly CCCLAW_MSG_START and CCCLAW_MSG_END (no extra characters)
-- The JSON must be on its own line between the two markers
-- Do NOT shorten, abbreviate, or modify the marker words in any way
+- Each message is a separate .json file in $HOME/ccclaw/data/outbox/
+- Use sequential filenames: msg_000000001.json, msg_000000002.json, msg_000000003.json, ...
+- Start from 1 and increment for each message you send
+- The JSON must have "to" and "msg" fields
+- Files are never deleted — the bridge tracks which ones it has already sent
 
 ## Spawning workers
 
@@ -28,7 +28,9 @@ To create a worker for a task:
 
 1. mkdir -p $HOME/ccclaw/workspaces/tNN
 2. Optionally place a CLAUDE.md in that folder with task-specific instructions
-3. tmux new-session -d -s tNN -x 500 -y 50 "set -a && source $HOME/ccclaw/.env && set +a && cd $HOME/ccclaw/workspaces/tNN && claude --dangerously-skip-permissions --model claude-sonnet-4-6 -p 'task description'"
+3. tmux new-session -d -s tNN -y 50 "set -a && source $HOME/ccclaw/.env && set +a && cd $HOME/ccclaw/workspaces/tNN && claude --dangerously-skip-permissions --model claude-sonnet-4-6"
+4. Wait a few seconds for Claude to start, then send the task:
+   sleep 5 && tmux send-keys -t tNN 'task description' Enter
 
 Name workers sequentially: t01, t02, t03, ...
 

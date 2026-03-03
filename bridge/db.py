@@ -29,9 +29,12 @@ def init_db(db_path):
             prefix TEXT PRIMARY KEY,
             next_id INTEGER DEFAULT 1
         );
-        CREATE TABLE IF NOT EXISTS processed_hashes (
-            hash TEXT PRIMARY KEY,
-            timestamp TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        CREATE TABLE IF NOT EXISTS outbox_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filepath TEXT UNIQUE NOT NULL,
+            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            sent_at TEXT,
+            content TEXT
         );
         CREATE TABLE IF NOT EXISTS pane_snapshots (
             session TEXT PRIMARY KEY,
@@ -67,16 +70,17 @@ def get_next_inbox_id(db_path, prefix):
     return next_id
 
 
-def get_processed_hashes(db_path):
+def get_processed_outbox_files(db_path):
     conn = _get_conn(db_path)
-    rows = conn.execute("SELECT hash FROM processed_hashes").fetchall()
-    return {row["hash"] for row in rows}
+    rows = conn.execute("SELECT filepath FROM outbox_messages").fetchall()
+    return {row["filepath"] for row in rows}
 
 
-def add_processed_hash(db_path, hash_val):
+def record_outbox_message(db_path, filepath, content):
     conn = _get_conn(db_path)
     conn.execute(
-        "INSERT OR IGNORE INTO processed_hashes (hash) VALUES (?)", (hash_val,)
+        "INSERT OR IGNORE INTO outbox_messages (filepath, sent_at, content) VALUES (?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?)",
+        (filepath, content),
     )
     conn.commit()
 

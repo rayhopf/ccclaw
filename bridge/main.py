@@ -1,6 +1,6 @@
 import asyncio
 import datetime
-import hashlib
+import glob
 import json
 import logging
 import os
@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 
-from db import init_db, store_message, get_next_inbox_id, get_processed_hashes, add_processed_hash, get_pane_snapshot, set_pane_snapshot
+from db import init_db, store_message, get_next_inbox_id, get_processed_outbox_files, record_outbox_message, get_pane_snapshot, set_pane_snapshot
 from tmux_io import send_keys
 from telegram_bot import create_bot
 
@@ -17,11 +17,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-MARKER_PATTERN = re.compile(
-    r"CCCLAW_MSG_START\s*\n(.*?)\n\s*CCCLAW_MSG_END",
-    re.DOTALL,
-)
 
 
 def load_config():
@@ -33,6 +28,7 @@ def load_config():
     config["_base_dir"] = base_dir
     config["_db_path"] = os.path.join(base_dir, config["db_path"])
     config["_inbox_dir"] = os.path.join(base_dir, config["inbox_dir"])
+    config["_outbox_dir"] = os.path.join(base_dir, config.get("outbox_dir", "data/outbox"))
     config["_logs_dir"] = os.path.join(base_dir, config["logs_dir"])
     return config
 
@@ -77,43 +73,30 @@ def log_pane_capture(logs_dir, session, content):
         f.write(content)
 
 
-def parse_outbound_messages(content):
-    """Extract CCCLAW_MSG messages from pane content."""
-    messages = []
-    for match in MARKER_PATTERN.finditer(content):
-        try:
-            payload = json.loads(match.group(1).strip())
-            messages.append(payload)
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse message JSON: %s", match.group(1)[:200])
-    return messages
-
-
-async def poll_main_pane(config, bot_app):
-    """Capture main pane and send any new outbound messages to Telegram."""
+async def poll_outbox(config, bot_app):
+    """Poll outbox directory for new JSON files and send them to Telegram."""
     db_path = config["_db_path"]
+    outbox_dir = config["_outbox_dir"]
     bot = bot_app.bot
 
-    content = capture_pane("main")
-    if not content:
-        return
+    processed = get_processed_outbox_files(db_path)
 
-    log_pane_capture(config["_logs_dir"], "main", content)
-
-    messages = parse_outbound_messages(content)
-    if not messages:
-        return
-
-    # Get already-processed message hashes to avoid duplicates
-    processed = get_processed_hashes(db_path)
-
-    for msg in messages:
-        text = msg.get("msg", "")
-        if not text:
+    pattern = os.path.join(outbox_dir, "*.json")
+    for file_path in sorted(glob.glob(pattern)):
+        if file_path in processed:
             continue
 
-        msg_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
-        if msg_hash in processed:
+        try:
+            with open(file_path) as f:
+                payload = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to read outbox file %s: %s", file_path, e)
+            record_outbox_message(db_path, file_path, None)
+            continue
+
+        text = payload.get("msg", "")
+        if not text:
+            record_outbox_message(db_path, file_path, None)
             continue
 
         # Find chat_id from most recent inbound message
@@ -130,7 +113,7 @@ async def poll_main_pane(config, bot_app):
             try:
                 await bot.send_message(chat_id=chat_id, text=text)
                 store_message(db_path, "out", chat_id, None, text)
-                add_processed_hash(db_path, msg_hash)
+                record_outbox_message(db_path, file_path, text)
                 logger.info("Sent outbound message to chat %s", chat_id)
             except Exception as e:
                 logger.error("Failed to send Telegram message: %s", e)
@@ -190,9 +173,9 @@ async def polling_loop(config, bot_app):
 
     while True:
         try:
-            await poll_main_pane(config, bot_app)
+            await poll_outbox(config, bot_app)
         except Exception as e:
-            logger.error("Error polling main pane: %s", e)
+            logger.error("Error polling outbox: %s", e)
 
         try:
             await poll_worker_panes(config)
@@ -212,6 +195,7 @@ async def main():
 
     # Create dirs
     os.makedirs(config["_inbox_dir"], exist_ok=True)
+    os.makedirs(config["_outbox_dir"], exist_ok=True)
     os.makedirs(config["_logs_dir"], exist_ok=True)
 
     # Create Telegram bot

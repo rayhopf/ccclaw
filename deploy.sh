@@ -184,6 +184,7 @@ cat > "$PROJECT_DIR/bridge/config.json" <<CONFIGJSON
   "poll_interval_seconds": 30,
   "db_path": "data/ccclaw.db",
   "inbox_dir": "data/inbox",
+  "outbox_dir": "data/outbox",
   "logs_dir": "data/logs",
   "max_workers": 10
 }
