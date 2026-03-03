@@ -1,6 +1,13 @@
 # CCCLAW
 
-Claude Code orchestrator with Telegram bridge. Runs Claude Code instances in tmux sessions on a VPS, controlled via Telegram.
+Claude Code orchestrator with Telegram bridge. An alternative to OpenClaw/pi-mono. Runs Claude Code instances in tmux sessions on a VPS, controlled via Telegram.
+
+## Why
+
+- After using Claude Code, it's hard to go back to other code agents (like pi-mono by OpenClaw) — not just the model, but the entire agent architecture
+- Big tech (Anthropic, OpenAI) may not be perfect, but they're more trustworthy and accountable than smaller organizations
+- Beyond Claude Code itself, minimal dependencies — just Python, tmux, and file I/O
+- Simple enough that you can read the whole codebase in an afternoon
 
 ## Architecture
 
