@@ -11,8 +11,8 @@ set +a
 mkdir -p "$CCCLAW_DIR/data"/{logs,inbox}
 mkdir -p "$CCCLAW_DIR/workspaces/main"
 
-# Start main session
-tmux new-session -d -s main \
+# Start main session (wide pane to prevent JSON word-wrapping in capture-pane)
+tmux new-session -d -s main -x 500 -y 50 \
   "set -a && source $CCCLAW_DIR/.env && set +a && cd $CCCLAW_DIR/workspaces/main && claude --dangerously-skip-permissions --model claude-sonnet-4-6"
 
 # Start bridge
