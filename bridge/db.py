@@ -25,14 +25,18 @@ def init_db(db_path):
             content TEXT NOT NULL,
             file_path TEXT
         );
-        CREATE TABLE IF NOT EXISTS file_offsets (
-            log_path TEXT PRIMARY KEY,
-            byte_offset INTEGER DEFAULT 0,
-            last_checked TEXT
-        );
         CREATE TABLE IF NOT EXISTS inbox_counter (
             prefix TEXT PRIMARY KEY,
             next_id INTEGER DEFAULT 1
+        );
+        CREATE TABLE IF NOT EXISTS processed_hashes (
+            hash TEXT PRIMARY KEY,
+            timestamp TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        );
+        CREATE TABLE IF NOT EXISTS pane_snapshots (
+            session TEXT PRIMARY KEY,
+            content TEXT,
+            timestamp TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
         );
     """)
     conn.commit()
@@ -63,23 +67,32 @@ def get_next_inbox_id(db_path, prefix):
     return next_id
 
 
-def get_byte_offset(db_path, log_path):
+def get_processed_hashes(db_path):
+    conn = _get_conn(db_path)
+    rows = conn.execute("SELECT hash FROM processed_hashes").fetchall()
+    return {row["hash"] for row in rows}
+
+
+def add_processed_hash(db_path, hash_val):
     conn = _get_conn(db_path)
     conn.execute(
-        "INSERT OR IGNORE INTO file_offsets (log_path, byte_offset) VALUES (?, 0)",
-        (log_path,),
+        "INSERT OR IGNORE INTO processed_hashes (hash) VALUES (?)", (hash_val,)
     )
     conn.commit()
+
+
+def get_pane_snapshot(db_path, session):
+    conn = _get_conn(db_path)
     row = conn.execute(
-        "SELECT byte_offset FROM file_offsets WHERE log_path = ?", (log_path,)
+        "SELECT content FROM pane_snapshots WHERE session = ?", (session,)
     ).fetchone()
-    return row["byte_offset"]
+    return row["content"] if row else None
 
 
-def update_byte_offset(db_path, log_path, offset):
+def set_pane_snapshot(db_path, session, content):
     conn = _get_conn(db_path)
     conn.execute(
-        "UPDATE file_offsets SET byte_offset = ?, last_checked = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE log_path = ?",
-        (offset, log_path),
+        "INSERT OR REPLACE INTO pane_snapshots (session, content, timestamp) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+        (session, content),
     )
     conn.commit()

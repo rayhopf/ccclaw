@@ -1,13 +1,14 @@
 import asyncio
-import glob
+import datetime
+import hashlib
 import json
 import logging
 import os
 import re
+import subprocess
 import sys
-import time
 
-from db import init_db, store_message, get_next_inbox_id, get_byte_offset, update_byte_offset
+from db import init_db, store_message, get_next_inbox_id, get_processed_hashes, add_processed_hash, get_pane_snapshot, set_pane_snapshot
 from tmux_io import send_keys
 from telegram_bot import create_bot
 
@@ -21,14 +22,6 @@ MARKER_PATTERN = re.compile(
     r"CCCLAW_MSG_START\s*\n(.*?)\n\s*CCCLAW_MSG_END",
     re.DOTALL,
 )
-
-# Strip timestamp prefix added by `ts`, e.g. "[2026-03-02T14:23:05] "
-TS_PREFIX = re.compile(r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\]\s?", re.MULTILINE)
-
-# Strip ANSI escape sequences from pipe-pane raw output.
-# pipe-pane captures raw terminal bytes: color codes (\e[38;5;174m),
-# cursor movement (\e[1C used instead of spaces), and control sequences.
-ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-9;?]*[A-Za-z]|\][^\x07]*\x07)")
 
 
 def load_config():
@@ -44,67 +37,86 @@ def load_config():
     return config
 
 
-def read_new_content(log_path, db_path):
-    """Read new content from a log file since last offset."""
-    if not os.path.exists(log_path):
-        return ""
-    offset = get_byte_offset(db_path, log_path)
-    file_size = os.path.getsize(log_path)
-    if file_size <= offset:
-        return ""
-    with open(log_path, "rb") as f:
-        f.seek(offset)
-        data = f.read()
-    update_byte_offset(db_path, log_path, file_size)
-    return data.decode("utf-8", errors="replace")
+def capture_pane(session):
+    """Capture the full scrollback of a tmux pane as clean text."""
+    try:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", session, "-p", "-S", "-"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout
+    except FileNotFoundError:
+        return None
 
 
-def strip_timestamps(text):
-    """Remove ts-added timestamp prefixes from log lines."""
-    return TS_PREFIX.sub("", text)
+def list_tmux_sessions():
+    """List all active tmux session names."""
+    try:
+        result = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return []
+        return [s.strip() for s in result.stdout.strip().split("\n") if s.strip()]
+    except FileNotFoundError:
+        return []
 
 
-def strip_ansi(text):
-    """Remove ANSI escape sequences from pipe-pane raw output."""
-    return ANSI_ESCAPE.sub("", text)
+def log_pane_capture(logs_dir, session, content):
+    """Append a timestamped capture-pane snapshot to the session's log file."""
+    log_path = os.path.join(logs_dir, f"{session}.log")
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    os.makedirs(logs_dir, exist_ok=True)
+    with open(log_path, "a") as f:
+        f.write(f"\n--- capture-pane [{timestamp}] ---\n")
+        f.write(content)
 
 
 def parse_outbound_messages(content):
-    """Extract CC_OUT messages from log content."""
-    clean = strip_ansi(strip_timestamps(content))
+    """Extract CCCLAW_MSG messages from pane content."""
     messages = []
-    for match in MARKER_PATTERN.finditer(clean):
+    for match in MARKER_PATTERN.finditer(content):
         try:
             payload = json.loads(match.group(1).strip())
             messages.append(payload)
         except json.JSONDecodeError:
-            logger.warning("Failed to parse CC_OUT JSON: %s", match.group(1)[:200])
+            logger.warning("Failed to parse message JSON: %s", match.group(1)[:200])
     return messages
 
 
-async def poll_main_log(config, bot_app):
-    """Poll main.log for outbound messages to Telegram."""
+async def poll_main_pane(config, bot_app):
+    """Capture main pane and send any new outbound messages to Telegram."""
     db_path = config["_db_path"]
-    main_log = os.path.join(config["_logs_dir"], "main.log")
-    # We need the bot to send messages; get it from the app
     bot = bot_app.bot
 
-    # Determine chat_id from whitelist (first whitelisted user's chat)
-    # We'll store it when we receive the first inbound message
-    # For now, read from DB
-    pass
-
-    content = read_new_content(main_log, db_path)
+    content = capture_pane("main")
     if not content:
         return
 
+    log_pane_capture(config["_logs_dir"], "main", content)
+
     messages = parse_outbound_messages(content)
+    if not messages:
+        return
+
+    # Get already-processed message hashes to avoid duplicates
+    processed = get_processed_hashes(db_path)
+
     for msg in messages:
         text = msg.get("msg", "")
         if not text:
             continue
 
-        # Find the chat_id to reply to from the most recent inbound message
+        msg_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+        if msg_hash in processed:
+            continue
+
+        # Find chat_id from most recent inbound message
         import sqlite3
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -118,6 +130,7 @@ async def poll_main_log(config, bot_app):
             try:
                 await bot.send_message(chat_id=chat_id, text=text)
                 store_message(db_path, "out", chat_id, None, text)
+                add_processed_hash(db_path, msg_hash)
                 logger.info("Sent outbound message to chat %s", chat_id)
             except Exception as e:
                 logger.error("Failed to send Telegram message: %s", e)
@@ -125,25 +138,38 @@ async def poll_main_log(config, bot_app):
             logger.warning("No inbound messages yet, can't determine chat_id. Dropping: %s", text[:100])
 
 
-async def poll_worker_logs(config):
-    """Poll worker t*.log files and relay new content to main."""
+async def poll_worker_panes(config):
+    """Capture worker panes and relay new content to main."""
     db_path = config["_db_path"]
-    logs_dir = config["_logs_dir"]
     inbox_dir = config["_inbox_dir"]
 
-    pattern = os.path.join(logs_dir, "t*.log")
-    for log_path in glob.glob(pattern):
-        basename = os.path.basename(log_path)
-        worker_name = basename.replace(".log", "")  # e.g. "t01"
+    sessions = list_tmux_sessions()
+    worker_sessions = [s for s in sessions if re.match(r"^t\d+$", s)]
 
-        content = read_new_content(log_path, db_path)
-        if not content:
+    for worker_name in worker_sessions:
+        content = capture_pane(worker_name)
+        if not content or not content.strip():
             continue
 
-        # Clean raw pipe-pane output before passing to main
-        content = strip_ansi(strip_timestamps(content))
+        log_pane_capture(config["_logs_dir"], worker_name, content)
 
-        # Write content to inbox file
+        # Compare with last snapshot to detect new content
+        prev = get_pane_snapshot(db_path, worker_name)
+        if content == prev:
+            continue
+
+        set_pane_snapshot(db_path, worker_name, content)
+
+        # Find the new portion (content after the previous snapshot)
+        if prev and content.startswith(prev.rstrip()):
+            new_content = content[len(prev.rstrip()):]
+        else:
+            new_content = content
+
+        if not new_content.strip():
+            continue
+
+        # Write new content to inbox file
         next_id = get_next_inbox_id(db_path, worker_name)
         filename = f"{worker_name}_{next_id:09d}.txt"
         file_path = os.path.join(inbox_dir, filename)
@@ -151,9 +177,8 @@ async def poll_worker_logs(config):
 
         os.makedirs(inbox_dir, exist_ok=True)
         with open(file_path, "w") as f:
-            f.write(content)
+            f.write(new_content)
 
-        # Notify main session
         send_keys("main", f"WORKER_UPDATE {worker_name}: {abs_file_path}")
         logger.info("Relayed worker %s output to main (%s)", worker_name, filename)
 
@@ -165,14 +190,14 @@ async def polling_loop(config, bot_app):
 
     while True:
         try:
-            await poll_main_log(config, bot_app)
+            await poll_main_pane(config, bot_app)
         except Exception as e:
-            logger.error("Error polling main log: %s", e)
+            logger.error("Error polling main pane: %s", e)
 
         try:
-            await poll_worker_logs(config)
+            await poll_worker_panes(config)
         except Exception as e:
-            logger.error("Error polling worker logs: %s", e)
+            logger.error("Error polling worker panes: %s", e)
 
         await asyncio.sleep(interval)
 

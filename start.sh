@@ -13,9 +13,7 @@ mkdir -p "$CCCLAW_DIR/workspaces/main"
 
 # Start main session
 tmux new-session -d -s main \
-  "set -a && source $CCCLAW_DIR/.env && set +a && cd $CCCLAW_DIR/workspaces/main && claude --dangerously-skip-permissions --model claude-haiku-4-5"
-tmux pipe-pane -t main \
-  "exec ts '[%Y-%m-%dT%H:%M:%S]' >> $CCCLAW_DIR/data/logs/main.log"
+  "set -a && source $CCCLAW_DIR/.env && set +a && cd $CCCLAW_DIR/workspaces/main && claude --dangerously-skip-permissions --model claude-sonnet-4-6"
 
 # Start bridge
 cd "$CCCLAW_DIR/bridge"

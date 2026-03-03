@@ -29,7 +29,6 @@ To create a worker for a task:
 1. mkdir -p $HOME/ccclaw/workspaces/tNN
 2. Optionally place a CLAUDE.md in that folder with task-specific instructions
 3. tmux new-session -d -s tNN "set -a && source $HOME/ccclaw/.env && set +a && cd $HOME/ccclaw/workspaces/tNN && claude --dangerously-skip-permissions --model claude-sonnet-4-6 -p 'task description'"
-4. tmux pipe-pane -t tNN "exec ts '[%Y-%m-%dT%H:%M:%S]' >> $HOME/ccclaw/data/logs/tNN.log"
 
 Name workers sequentially: t01, t02, t03, ...
 
