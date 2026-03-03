@@ -144,6 +144,19 @@ PY
 chown "$USERNAME:$USERNAME" "$CLAUDE_CONFIG_PATH"
 chmod 600 "$CLAUDE_CONFIG_PATH"
 
+# Pre-create ~/.claude/settings.json to skip the bypass-permissions-mode
+# confirmation dialog (shown when --dangerously-skip-permissions is used).
+CLAUDE_SETTINGS_DIR="$USER_HOME/.claude"
+mkdir -p "$CLAUDE_SETTINGS_DIR"
+cat > "$CLAUDE_SETTINGS_DIR/settings.json" <<'SETTINGS'
+{
+  "skipDangerousModePermissionPrompt": true
+}
+SETTINGS
+chown -R "$USERNAME:$USERNAME" "$CLAUDE_SETTINGS_DIR"
+chmod 700 "$CLAUDE_SETTINGS_DIR"
+chmod 600 "$CLAUDE_SETTINGS_DIR/settings.json"
+
 # ----------------------------------------------------------
 # Step 5: Write configuration
 # ----------------------------------------------------------
