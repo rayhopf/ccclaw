@@ -8,10 +8,10 @@ source "$CCCLAW_DIR/.env"
 set +a
 
 # Create dirs
-mkdir -p "$CCCLAW_DIR/data"/{logs,inbox,outbox}
+mkdir -p "$CCCLAW_DIR/data"/{logs,inbox,main}
 mkdir -p "$CCCLAW_DIR/workspaces/main"
 
-# Start main session (wide pane to prevent JSON word-wrapping in capture-pane)
+# Start main session
 tmux new-session -d -s main -y 50 \
   "set -a && source $CCCLAW_DIR/.env && set +a && cd $CCCLAW_DIR/workspaces/main && claude --dangerously-skip-permissions --model claude-sonnet-4-6"
 

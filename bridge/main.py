@@ -1,14 +1,12 @@
 import asyncio
-import datetime
-import glob
 import json
 import logging
 import os
 import re
 import subprocess
-import sys
+import time
 
-from db import init_db, store_message, get_next_inbox_id, get_processed_outbox_files, record_outbox_message, get_pane_snapshot, set_pane_snapshot
+from db import init_db, store_message, record_outbox_message
 from tmux_io import send_keys
 from telegram_bot import create_bot
 
@@ -28,162 +26,207 @@ def load_config():
     config["_base_dir"] = base_dir
     config["_db_path"] = os.path.join(base_dir, config["db_path"])
     config["_inbox_dir"] = os.path.join(base_dir, config["inbox_dir"])
-    config["_outbox_dir"] = os.path.join(base_dir, config.get("outbox_dir", "data/outbox"))
+    config["_data_dir"] = os.path.join(base_dir, "data")
     config["_logs_dir"] = os.path.join(base_dir, config["logs_dir"])
     return config
 
 
-def capture_pane(session):
-    """Capture the full scrollback of a tmux pane as clean text."""
+# In-memory counters: {"main": 0, "t01": 0, ...}
+counters = {}
+
+
+def ensure_session(name, config):
+    """Ensure a tmux session exists for the given actor. Create if needed."""
+    result = subprocess.run(
+        ["tmux", "has-session", "-t", name],
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return  # session already exists
+
+    base_dir = config["_base_dir"]
+    data_dir = os.path.join(config["_data_dir"], name)
+    workspace_dir = os.path.join(base_dir, "workspaces", name)
+
+    os.makedirs(data_dir, exist_ok=True)
+    os.makedirs(workspace_dir, exist_ok=True)
+
+    # Write worker CLAUDE.md
+    claude_md = f"""# You are worker {name}
+
+You run in tmux session "{name}" on a VPS. You receive tasks from Main and report results back.
+
+The project root is `$HOME/ccclaw`.
+
+## Receiving messages
+
+- `MSG: /path/to/file` — Read the file for the message content.
+
+## Sending messages
+
+Write a JSON file to your outbox directory. Example:
+
+File: $HOME/ccclaw/data/{name}/msg_000000001.json
+Content:
+{{"to":"main","msg":"Your results here"}}
+
+Rules:
+- Each message is a separate .json file in `$HOME/ccclaw/data/{name}/`
+- Use sequential filenames: msg_000000001.json, msg_000000002.json, ...
+- Start from 1 and increment for each message you send
+- The JSON must have "to" and "msg" fields
+- The content must be valid JSON — do NOT escape characters like ! or ?
+
+## Guidelines
+
+- Complete the task you are given
+- Report results back to main when done
+- Stay alive for follow-up tasks
+"""
+    with open(os.path.join(workspace_dir, "CLAUDE.md"), "w") as f:
+        f.write(claude_md)
+
+    # Also accept trust for this workspace in Claude config
+    claude_config_path = os.path.expanduser("~/.claude.json")
     try:
-        result = subprocess.run(
-            ["tmux", "capture-pane", "-t", session, "-p", "-S", "-"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            return None
-        return result.stdout
-    except FileNotFoundError:
-        return None
+        with open(claude_config_path) as f:
+            claude_config = json.load(f)
+        projects = claude_config.get("projects", {})
+        projects[workspace_dir] = projects.get(workspace_dir, {})
+        projects[workspace_dir]["hasTrustDialogAccepted"] = True
+        claude_config["projects"] = projects
+        with open(claude_config_path, "w") as f:
+            json.dump(claude_config, f, separators=(",", ":"))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("Could not update Claude config for workspace %s", workspace_dir)
+
+    env_file = os.path.join(base_dir, ".env")
+    cmd = (
+        f"set -a && source {env_file} && set +a && "
+        f"cd {workspace_dir} && "
+        f"claude --dangerously-skip-permissions --model claude-sonnet-4-6"
+    )
+    subprocess.run(
+        ["tmux", "new-session", "-d", "-s", name, "-y", "50", cmd],
+        check=True,
+    )
+    logger.info("Created tmux session '%s', waiting for Claude to boot...", name)
+    time.sleep(8)
 
 
-def list_tmux_sessions():
-    """List all active tmux session names."""
-    try:
-        result = subprocess.run(
-            ["tmux", "list-sessions", "-F", "#{session_name}"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            return []
-        return [s.strip() for s in result.stdout.strip().split("\n") if s.strip()]
-    except FileNotFoundError:
-        return []
-
-
-def log_pane_capture(logs_dir, session, content):
-    """Append a timestamped capture-pane snapshot to the session's log file."""
-    log_path = os.path.join(logs_dir, f"{session}.log")
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-    os.makedirs(logs_dir, exist_ok=True)
-    with open(log_path, "a") as f:
-        f.write(f"\n--- capture-pane [{timestamp}] ---\n")
-        f.write(content)
-
-
-async def poll_outbox(config, bot_app):
-    """Poll outbox directory for new JSON files and send them to Telegram."""
+async def poll_outboxes(config, bot_app):
+    """Scan data/main/ and data/t*/ for new JSON message files and route them."""
     db_path = config["_db_path"]
-    outbox_dir = config["_outbox_dir"]
+    data_dir = config["_data_dir"]
     bot = bot_app.bot
 
-    processed = get_processed_outbox_files(db_path)
+    # Discover all actor directories
+    if not os.path.isdir(data_dir):
+        return
 
-    pattern = os.path.join(outbox_dir, "*.json")
-    for file_path in sorted(glob.glob(pattern)):
-        if file_path in processed:
-            continue
+    actor_dirs = []
+    for entry in os.listdir(data_dir):
+        entry_path = os.path.join(data_dir, entry)
+        if os.path.isdir(entry_path) and (entry == "main" or re.match(r"^t\d+$", entry)):
+            actor_dirs.append(entry)
 
-        try:
-            with open(file_path) as f:
-                raw = f.read()
-            # Fix invalid JSON escapes (e.g. \! \?) that Claude may produce via shell echo
-            raw = re.sub(r'\\([^"\\/bfnrtu])', r'\1', raw)
-            payload = json.loads(raw)
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning("Failed to read outbox file %s: %s", file_path, e)
-            record_outbox_message(db_path, file_path, None)
-            continue
+    for actor in actor_dirs:
+        actor_dir = os.path.join(data_dir, actor)
 
-        text = payload.get("msg", "")
-        if not text:
-            record_outbox_message(db_path, file_path, None)
-            continue
+        # Initialize counter if needed
+        if actor not in counters:
+            # Scan existing files to find the highest number
+            highest = 0
+            for fname in os.listdir(actor_dir):
+                m = re.match(r"^msg_(\d+)\.json$", fname)
+                if m:
+                    n = int(m.group(1))
+                    if n > highest:
+                        highest = n
+            counters[actor] = highest
+            # On first discovery, mark all existing files as already processed
+            # so we don't re-send old messages on bridge restart
+            if highest > 0:
+                logger.info("Initialized counter for '%s' at %d (skipping existing)", actor, highest)
+                continue
 
-        # Find chat_id from most recent inbound message
-        import sqlite3
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT chat_id FROM messages WHERE direction='in' ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        conn.close()
+        n = counters[actor] + 1
+        while True:
+            filename = f"msg_{n:09d}.json"
+            file_path = os.path.join(actor_dir, filename)
 
-        if row:
-            chat_id = row["chat_id"]
+            if not os.path.exists(file_path):
+                break
+
             try:
-                await bot.send_message(chat_id=chat_id, text=text)
-                store_message(db_path, "out", chat_id, None, text)
-                record_outbox_message(db_path, file_path, text)
-                logger.info("Sent outbound message to chat %s", chat_id)
-            except Exception as e:
-                logger.error("Failed to send Telegram message: %s", e)
-        else:
-            logger.warning("No inbound messages yet, can't determine chat_id. Dropping: %s", text[:100])
+                with open(file_path) as f:
+                    raw = f.read()
+                # Fix invalid JSON escapes that Claude may produce
+                raw = re.sub(r'\\([^"\\/bfnrtu])', r'\1', raw)
+                payload = json.loads(raw)
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Failed to read %s: %s", file_path, e)
+                record_outbox_message(db_path, file_path, None)
+                n += 1
+                continue
 
+            to = payload.get("to", "")
+            msg = payload.get("msg", "")
 
-async def poll_worker_panes(config):
-    """Capture worker panes and relay new content to main."""
-    db_path = config["_db_path"]
-    inbox_dir = config["_inbox_dir"]
+            if not msg:
+                record_outbox_message(db_path, file_path, None)
+                n += 1
+                continue
 
-    sessions = list_tmux_sessions()
-    worker_sessions = [s for s in sessions if re.match(r"^t\d+$", s)]
+            if to == "user":
+                # Send via Telegram
+                import sqlite3
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT chat_id FROM messages WHERE direction='in' ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                conn.close()
 
-    for worker_name in worker_sessions:
-        content = capture_pane(worker_name)
-        if not content or not content.strip():
-            continue
+                if row:
+                    chat_id = row["chat_id"]
+                    try:
+                        await bot.send_message(chat_id=chat_id, text=msg)
+                        store_message(db_path, "out", chat_id, None, msg)
+                        record_outbox_message(db_path, file_path, msg)
+                        logger.info("[%s] -> user (Telegram): %s", actor, msg[:80])
+                    except Exception as e:
+                        logger.error("Failed to send Telegram message: %s", e)
+                else:
+                    logger.warning("No inbound messages yet, can't determine chat_id. Dropping: %s", msg[:100])
 
-        log_pane_capture(config["_logs_dir"], worker_name, content)
+            elif to == "main" or re.match(r"^t\d+$", to):
+                # Route to another tmux session
+                ensure_session(to, config)
+                abs_path = os.path.abspath(file_path)
+                send_keys(to, f"MSG: {abs_path}")
+                record_outbox_message(db_path, file_path, msg)
+                logger.info("[%s] -> %s: %s", actor, to, msg[:80])
 
-        # Compare with last snapshot to detect new content
-        prev = get_pane_snapshot(db_path, worker_name)
-        if content == prev:
-            continue
+            else:
+                logger.warning("Unknown 'to' target '%s' in %s", to, file_path)
+                record_outbox_message(db_path, file_path, None)
 
-        set_pane_snapshot(db_path, worker_name, content)
+            n += 1
 
-        # Find the new portion (content after the previous snapshot)
-        if prev and content.startswith(prev.rstrip()):
-            new_content = content[len(prev.rstrip()):]
-        else:
-            new_content = content
-
-        if not new_content.strip():
-            continue
-
-        # Write new content to inbox file
-        next_id = get_next_inbox_id(db_path, worker_name)
-        filename = f"{worker_name}_{next_id:09d}.txt"
-        file_path = os.path.join(inbox_dir, filename)
-        abs_file_path = os.path.abspath(file_path)
-
-        os.makedirs(inbox_dir, exist_ok=True)
-        with open(file_path, "w") as f:
-            f.write(new_content)
-
-        send_keys("main", f"WORKER_UPDATE {worker_name}: {abs_file_path}")
-        logger.info("Relayed worker %s output to main (%s)", worker_name, filename)
+        counters[actor] = n - 1
 
 
 async def polling_loop(config, bot_app):
     """Main polling loop that runs every poll_interval_seconds."""
-    interval = config.get("poll_interval_seconds", 30)
+    interval = config.get("poll_interval_seconds", 3)
     logger.info("Starting polling loop (interval=%ds)", interval)
 
     while True:
         try:
-            await poll_outbox(config, bot_app)
+            await poll_outboxes(config, bot_app)
         except Exception as e:
-            logger.error("Error polling outbox: %s", e)
-
-        try:
-            await poll_worker_panes(config)
-        except Exception as e:
-            logger.error("Error polling worker panes: %s", e)
+            logger.error("Error polling outboxes: %s", e)
 
         await asyncio.sleep(interval)
 
@@ -198,7 +241,7 @@ async def main():
 
     # Create dirs
     os.makedirs(config["_inbox_dir"], exist_ok=True)
-    os.makedirs(config["_outbox_dir"], exist_ok=True)
+    os.makedirs(os.path.join(config["_data_dir"], "main"), exist_ok=True)
     os.makedirs(config["_logs_dir"], exist_ok=True)
 
     # Create Telegram bot

@@ -6,50 +6,41 @@ The project root is `$HOME/ccclaw`.
 
 ## Receiving messages
 
-- `USER_MSG: /path/to/file` — User sent a Telegram message. Read the file for full content.
-- `WORKER_UPDATE tNN: /path/to/file` — New output from worker tNN. Read the file for full content.
+- `MSG: /path/to/file` — Read the file for the message content (from user or worker).
 
-## Replying to the user
+## Sending messages
 
-Write a JSON file to the outbox directory. The bridge picks it up and sends it to Telegram.
+Write a JSON file to your outbox directory. The bridge picks it up and routes it.
 
 Use the Write tool to create the file. Example:
 
-File: $HOME/ccclaw/data/outbox/msg_000000001.json
+File: $HOME/ccclaw/data/main/msg_000000001.json
 Content:
 {"to":"user","msg":"Your message here"}
 
+To message a worker:
+
+File: $HOME/ccclaw/data/main/msg_000000002.json
+Content:
+{"to":"t01","msg":"Search for..."}
+
 Rules:
-- Each message is a separate .json file in $HOME/ccclaw/data/outbox/
-- Use sequential filenames: msg_000000001.json, msg_000000002.json, msg_000000003.json, ...
+- Each message is a separate .json file in `$HOME/ccclaw/data/main/`
+- Use sequential filenames: msg_000000001.json, msg_000000002.json, ...
 - Start from 1 and increment for each message you send
 - The JSON must have "to" and "msg" fields
 - The content must be valid JSON — do NOT escape characters like ! or ?
-- Files are never deleted — the bridge tracks which ones it has already sent
+- The "to" field can be: "user" (Telegram), "t01", "t02", etc. (workers)
 
-## Spawning workers
+## Workers
 
-To create a worker for a task:
-
-1. mkdir -p $HOME/ccclaw/workspaces/tNN
-2. Optionally place a CLAUDE.md in that folder with task-specific instructions
-3. tmux new-session -d -s tNN -y 50 "set -a && source $HOME/ccclaw/.env && set +a && cd $HOME/ccclaw/workspaces/tNN && claude --dangerously-skip-permissions --model claude-sonnet-4-6"
-4. Wait a few seconds for Claude to start, then send the task:
-   sleep 5 && tmux send-keys -t tNN 'task description' Enter
-
-Name workers sequentially: t01, t02, t03, ...
-
-## Sending input to a worker
-
-tmux send-keys -t tNN 'your instruction here' Enter
-
-## Checking worker status
-
-tmux has-session -t tNN 2>/dev/null && echo "alive" || echo "dead"
+- The bridge automatically creates workers when you send them a message
+- You do NOT need to create tmux sessions or workspaces — just write a message with "to":"tNN"
+- Name workers sequentially: t01, t02, t03, ...
+- Workers stay alive for follow-up tasks — never kill them
+- Workers report back via `MSG: /path/to/file` delivered to your session
 
 ## Guidelines
 
 - Be concise when notifying the user
 - Keep track of which workers are doing what
-- Workers stay alive for follow-up input
-- NEVER kill or stop a worker unless the user explicitly asks you to

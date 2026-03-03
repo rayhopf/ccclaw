@@ -36,11 +36,6 @@ def init_db(db_path):
             sent_at TEXT,
             content TEXT
         );
-        CREATE TABLE IF NOT EXISTS pane_snapshots (
-            session TEXT PRIMARY KEY,
-            content TEXT,
-            timestamp TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-        );
     """)
     conn.commit()
 
@@ -70,33 +65,10 @@ def get_next_inbox_id(db_path, prefix):
     return next_id
 
 
-def get_processed_outbox_files(db_path):
-    conn = _get_conn(db_path)
-    rows = conn.execute("SELECT filepath FROM outbox_messages").fetchall()
-    return {row["filepath"] for row in rows}
-
-
 def record_outbox_message(db_path, filepath, content):
     conn = _get_conn(db_path)
     conn.execute(
         "INSERT OR IGNORE INTO outbox_messages (filepath, sent_at, content) VALUES (?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?)",
         (filepath, content),
-    )
-    conn.commit()
-
-
-def get_pane_snapshot(db_path, session):
-    conn = _get_conn(db_path)
-    row = conn.execute(
-        "SELECT content FROM pane_snapshots WHERE session = ?", (session,)
-    ).fetchone()
-    return row["content"] if row else None
-
-
-def set_pane_snapshot(db_path, session, content):
-    conn = _get_conn(db_path)
-    conn.execute(
-        "INSERT OR REPLACE INTO pane_snapshots (session, content, timestamp) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
-        (session, content),
     )
     conn.commit()

@@ -40,7 +40,7 @@ def create_bot(config):
         store_message(db_path, "in", chat_id, username, text, abs_file_path)
 
         # Send to main tmux session
-        send_keys("main", f"USER_MSG: {abs_file_path}")
+        send_keys("main", f"MSG: {abs_file_path}")
 
         logger.info("Received message from %s, wrote to %s", username, filename)
 

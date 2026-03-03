@@ -181,10 +181,9 @@ cat > "$PROJECT_DIR/bridge/config.json" <<CONFIGJSON
 {
   "telegram_bot_token": "$BOT_TOKEN",
   "whitelist_usernames": $WHITELIST_JSON,
-  "poll_interval_seconds": 30,
+  "poll_interval_seconds": 3,
   "db_path": "data/ccclaw.db",
   "inbox_dir": "data/inbox",
-  "outbox_dir": "data/outbox",
   "logs_dir": "data/logs",
   "max_workers": 10
 }
@@ -205,7 +204,7 @@ echo "[6/6] Starting CCCLAW..."
 su - "$USERNAME" bash -c '
 cd ~/ccclaw
 chmod +x start.sh
-mkdir -p data/{logs,inbox}
+mkdir -p data/{logs,inbox,main}
 mkdir -p workspaces/main
 
 tmux kill-server 2>/dev/null || true
