@@ -107,7 +107,7 @@ Rules:
         f"claude --dangerously-skip-permissions --model claude-sonnet-4-6"
     )
     subprocess.run(
-        ["tmux", "new-session", "-d", "-s", name, "-y", "50", cmd],
+        ["tmux", "new-session", "-d", "-s", name, cmd],
         check=True,
     )
     logger.info("Created tmux session '%s', waiting for Claude to boot...", name)
