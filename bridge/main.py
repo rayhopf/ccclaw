@@ -88,7 +88,10 @@ async def poll_outbox(config, bot_app):
 
         try:
             with open(file_path) as f:
-                payload = json.load(f)
+                raw = f.read()
+            # Fix invalid JSON escapes (e.g. \! \?) that Claude may produce via shell echo
+            raw = re.sub(r'\\([^"\\/bfnrtu])', r'\1', raw)
+            payload = json.loads(raw)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to read outbox file %s: %s", file_path, e)
             record_outbox_message(db_path, file_path, None)

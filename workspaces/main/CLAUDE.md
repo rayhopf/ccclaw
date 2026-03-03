@@ -13,13 +13,18 @@ The project root is `$HOME/ccclaw`.
 
 Write a JSON file to the outbox directory. The bridge picks it up and sends it to Telegram.
 
-echo '{"to":"user","msg":"Your message here"}' > $HOME/ccclaw/data/outbox/msg_000000001.json
+Use the Write tool to create the file. Example:
+
+File: $HOME/ccclaw/data/outbox/msg_000000001.json
+Content:
+{"to":"user","msg":"Your message here"}
 
 Rules:
 - Each message is a separate .json file in $HOME/ccclaw/data/outbox/
 - Use sequential filenames: msg_000000001.json, msg_000000002.json, msg_000000003.json, ...
 - Start from 1 and increment for each message you send
 - The JSON must have "to" and "msg" fields
+- The content must be valid JSON — do NOT escape characters like ! or ?
 - Files are never deleted — the bridge tracks which ones it has already sent
 
 ## Spawning workers
