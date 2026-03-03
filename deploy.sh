@@ -93,16 +93,16 @@ else
     echo "Repo cloned."
 fi
 
-# Pre-configure Claude Code to reduce first-run interactive prompts.
-# Keep existing keys if the file already exists, and force known-safe values.
+# Pre-configure Claude Code to skip ALL first-run interactive prompts.
+# This sets: theme, onboarding, API key approval, and trust dialog.
 CLAUDE_CONFIG_PATH="$USER_HOME/.claude.json"
 CLAUDE_MAIN_WORKSPACE="$PROJECT_DIR/workspaces/main"
-python3 - "$CLAUDE_CONFIG_PATH" "$PROJECT_DIR" "$CLAUDE_MAIN_WORKSPACE" <<'PY'
+python3 - "$CLAUDE_CONFIG_PATH" "$PROJECT_DIR" "$CLAUDE_MAIN_WORKSPACE" "$API_KEY" <<'PY'
 import json
 import os
 import sys
 
-config_path, project_root, main_workspace = sys.argv[1:4]
+config_path, project_root, main_workspace, api_key = sys.argv[1:5]
 config = {}
 
 if os.path.exists(config_path):
@@ -116,6 +116,14 @@ if os.path.exists(config_path):
 
 config["theme"] = config.get("theme", "dark")
 config["hasCompletedOnboarding"] = True
+
+# Approve the API key so Claude Code won't prompt "Detected a custom API key".
+# Claude Code uses the last 20 characters as the truncated key identifier.
+truncated_key = api_key[-20:]
+approved = config.get("customApiKeyResponses", {}).get("approved", [])
+if truncated_key not in approved:
+    approved.append(truncated_key)
+config["customApiKeyResponses"] = {"approved": approved}
 
 projects = config.get("projects")
 if not isinstance(projects, dict):

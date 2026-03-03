@@ -25,6 +25,11 @@ MARKER_PATTERN = re.compile(
 # Strip timestamp prefix added by `ts`, e.g. "[2026-03-02T14:23:05] "
 TS_PREFIX = re.compile(r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\]\s?", re.MULTILINE)
 
+# Strip ANSI escape sequences from pipe-pane raw output.
+# pipe-pane captures raw terminal bytes: color codes (\e[38;5;174m),
+# cursor movement (\e[1C used instead of spaces), and control sequences.
+ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-9;?]*[A-Za-z]|\][^\x07]*\x07)")
+
 
 def load_config():
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
@@ -59,9 +64,14 @@ def strip_timestamps(text):
     return TS_PREFIX.sub("", text)
 
 
+def strip_ansi(text):
+    """Remove ANSI escape sequences from pipe-pane raw output."""
+    return ANSI_ESCAPE.sub("", text)
+
+
 def parse_outbound_messages(content):
     """Extract CC_OUT messages from log content."""
-    clean = strip_timestamps(content)
+    clean = strip_ansi(strip_timestamps(content))
     messages = []
     for match in MARKER_PATTERN.finditer(clean):
         try:
@@ -129,6 +139,9 @@ async def poll_worker_logs(config):
         content = read_new_content(log_path, db_path)
         if not content:
             continue
+
+        # Clean raw pipe-pane output before passing to main
+        content = strip_ansi(strip_timestamps(content))
 
         # Write content to inbox file
         next_id = get_next_inbox_id(db_path, worker_name)

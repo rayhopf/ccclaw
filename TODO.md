@@ -2,15 +2,47 @@
 
 ## Claude Code Interactive Prompts
 
-Claude Code has multiple first-run interactive prompts that block the tmux session from becoming usable. We've fixed some but not all.
+Claude Code has multiple first-run interactive prompts that block the tmux session from becoming usable. **All prompts are now solved.**
 
-### Fixed
+### Fixed (All)
 - **Theme picker** — Solved by pre-setting `hasCompletedOnboarding: true` in `~/.claude.json`
+- **Login method selector** — Part of the onboarding flow. Also skipped by `hasCompletedOnboarding: true`
+- **Security notes screen** — Part of the onboarding flow. Also skipped by `hasCompletedOnboarding: true`
+- **"Detected a custom API key" prompt** — Solved by pre-setting `customApiKeyResponses.approved` with the **last 20 characters** of the API key (found by reading Claude Code source: `function mV(A){return A.slice(-20)}`)
 - **Trust folder dialog** — Solved by pre-setting `projects[path].hasTrustDialogAccepted: true` in `~/.claude.json`
 
-### Not Yet Fixed
-- **"Detected a custom API key" prompt** — Claude Code asks "Do you want to use this API key?" when it detects `ANTHROPIC_API_KEY` in the environment. Default selection is "No (recommended)". Need to find the config key to auto-accept, or find another way to bypass. This blocks the main session from starting.
-- **Possible other prompts** — There may be additional first-run prompts we haven't encountered yet. Need a complete first-run walkthrough to identify all of them.
+### Complete ~/.claude.json Template
+
+The following config bypasses ALL first-run prompts when `ANTHROPIC_API_KEY` is set in the environment:
+
+```json
+{
+  "theme": "dark",
+  "hasCompletedOnboarding": true,
+  "customApiKeyResponses": {
+    "approved": ["<LAST 20 CHARS OF API KEY>"]
+  },
+  "projects": {
+    "<PROJECT_PATH>": {
+      "hasTrustDialogAccepted": true
+    }
+  }
+}
+```
+
+To compute the truncated key: `echo "$ANTHROPIC_API_KEY" | tail -c 21` or `key[-20:]` in Python.
+
+### Full Onboarding Sequence (for reference)
+
+When `hasCompletedOnboarding` is NOT set, the onboarding flow shows these steps in order:
+1. **Preflight / login method** (only if OAuth is enabled, i.e. no API key)
+2. **Theme picker**
+3. **OAuth login** (only if OAuth is enabled)
+4. **API key approval** (only if `ANTHROPIC_API_KEY` is set and key is not yet approved)
+5. **Security notes**
+6. **Terminal setup** (only on supported terminals)
+
+After onboarding, the **trust dialog** is shown separately (outside onboarding) for each new project directory.
 
 ## Config Path Bug (Fixed)
 
@@ -18,9 +50,8 @@ Claude Code has multiple first-run interactive prompts that block the tmux sessi
 
 ## deploy.sh Needs Update
 
-- The `~/.claude.json` pre-configuration (step before step 5) needs to include the API key acceptance key once we find it
-- The pre-config currently only sets `theme`, `hasCompletedOnboarding`, and `hasTrustDialogAccepted`
-- Need to also write the `projects` dict with the correct project path for trust
+- The `~/.claude.json` pre-configuration now has the complete template (see above)
+- Need to compute the truncated API key dynamically in deploy.sh: `echo "$ANTHROPIC_API_KEY" | tail -c 21`
 
 ## Minor
 
