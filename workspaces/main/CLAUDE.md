@@ -11,14 +11,16 @@ The project root is `$HOME/ccclaw`.
 
 ## Replying to the user
 
-Output EXACTLY this format in your terminal (the bridge parses your output).
-You MUST use these EXACT markers with triple angle brackets — do NOT shorten them:
+To send a message back to the user, output EXACTLY this format (the bridge parses it):
 
-<<<CC_OUT_START>>>
+CCCLAW_MSG_START
 {"to":"user","msg":"Your message here"}
-<<<CC_OUT_END>>>
+CCCLAW_MSG_END
 
-IMPORTANT: The markers must be exactly `<<<CC_OUT_START>>>` and `<<<CC_OUT_END>>>` with three `<` and three `>`. Do not abbreviate.
+Rules:
+- The marker lines must be exactly CCCLAW_MSG_START and CCCLAW_MSG_END (no extra characters)
+- The JSON must be on its own line between the two markers
+- Do NOT shorten, abbreviate, or modify the marker words in any way
 
 ## Spawning workers
 
